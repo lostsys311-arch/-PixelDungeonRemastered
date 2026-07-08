@@ -50,9 +50,9 @@ public class GameView extends SurfaceView implements SurfaceHolder.Callback, Run
     private void recalcLayout() {
         screenW = getWidth();
         screenH = getHeight();
-        int maxTileW = screenW / quality.viewTilesX;
-        int maxTileH = screenH / (quality.viewTilesY(screenW, screenH) + 5);
-        tileSize = Math.min(quality.tileSize, Math.min(maxTileW, maxTileH));
+        tileSize = screenW / quality.viewTilesX;
+        int maxTileH = (screenH - tileSize * 6) / quality.viewTilesX;
+        tileSize = Math.min(tileSize, Math.max(8, maxTileH));
         viewTilesX = screenW / tileSize;
         viewTilesY = (screenH - tileSize * 6) / tileSize;
         if (viewTilesX < 8) viewTilesX = 8;
@@ -338,7 +338,7 @@ public class GameView extends SurfaceView implements SurfaceHolder.Callback, Run
             canvas.drawRoundRect(cx - 120, y - 12, cx + 120, y + 16, 8, 8, paint);
             paint.setStyle(Paint.Style.FILL);
             paint.setColor(sel ? Color.rgb(80, 180, 255) : Color.LTGRAY);
-            canvas.drawText(qs[i].name() + " (" + qs[i].tileSize + "px)", cx, y + 6, paint);
+            canvas.drawText(qs[i].name() + " (" + qs[i].viewTilesX + " tiles)", cx, y + 6, paint);
         }
 
         int y = cy + 100;
