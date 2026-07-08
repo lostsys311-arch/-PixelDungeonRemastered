@@ -20,10 +20,19 @@ public class GameLogic {
     public boolean playerTurn;
     public boolean gameOver;
     public boolean won;
+    private SoundListener soundListener;
 
     public GameLogic() {
         log = new MessageLog();
         initLevel();
+    }
+
+    public void setSoundListener(SoundListener listener) {
+        this.soundListener = listener;
+    }
+
+    private void emitSound(String name) {
+        if (soundListener != null) soundListener.onSound(name);
     }
 
     public void initLevel() {
@@ -129,8 +138,10 @@ public class GameLogic {
             if (e.isAlive() && e.x == nx && e.y == ny) {
                 int dmg = player.attack(e);
                 log.add("You hit " + e.name + " for " + dmg + ".");
+                emitSound("player_attack");
                 if (!e.isAlive()) {
                     log.add(e.name + " defeated!");
+                    emitSound("monster_die");
                     monsters.remove(e);
                 }
                 endTurn();
@@ -147,10 +158,12 @@ public class GameLogic {
         }
         if (picked != null) {
             applyItem(picked);
+            emitSound("item_pickup");
             items.remove(picked);
         }
 
         if (tiles[nx][ny] == Tile.STAIRS_DOWN) {
+            emitSound("stairs");
             currentDepth++;
             initLevel();
             return;
@@ -164,6 +177,7 @@ public class GameLogic {
             case POTION_HEAL:
                 player.hp = Math.min(player.maxHp, player.hp + 10 + RNG.nextInt(10));
                 log.add("Healing potion! HP restored.");
+                emitSound("heal");
                 break;
             case POTION_STRENGTH:
                 player.attack += 2; player.maxHp += 5; player.hp += 5;
@@ -203,11 +217,13 @@ public class GameLogic {
         if (player.hp <= 0) {
             gameOver = true;
             log.add("You died on depth " + currentDepth + ".");
+            emitSound("death");
         }
         playerTurn = true;
         if (currentDepth > 10 && !gameOver) {
             won = true;
             log.add("You escaped the dungeon! Victory!");
+            emitSound("victory");
         }
     }
 
@@ -228,6 +244,7 @@ public class GameLogic {
         if (canSee && dist == 1) {
             int dmg = m.attack(player);
             log.add(m.name + " hits you for " + dmg + ".");
+            emitSound("player_hit");
             return;
         }
         if (canSee && dist <= m.visionRange) {
@@ -253,6 +270,7 @@ public class GameLogic {
         if (nx == player.x && ny == player.y) {
             int dmg = m.attack(player);
             log.add(m.name + " hits you for " + dmg + ".");
+            emitSound("player_hit");
             return true;
         }
         for (Entity other : monsters) {

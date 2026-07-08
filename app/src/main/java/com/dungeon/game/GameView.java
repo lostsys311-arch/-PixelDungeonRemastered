@@ -4,38 +4,38 @@ import android.content.Context;
 import android.graphics.*;
 import android.view.*;
 
-public class GameView extends SurfaceView implements SurfaceHolder.Callback, Runnable {
+public class GameView extends SurfaceView implements SurfaceHolder.Callback, Runnable, SoundListener {
     private Thread gameThread;
     private volatile boolean running;
     private GameLogic logic;
+    private SoundManager sound;
     private Paint paint;
-    private Typeface font;
-
-    private static final int VIEWPORT_TILES_X = 21;
-    private static final int VIEWPORT_TILES_Y = 15;
+    private TileAtlas atlas;
+    private GraphicsQuality quality;
     private int tileSize;
+    private int viewTilesX, viewTilesY;
     private int viewX, viewY;
     private int screenW, screenH;
-
     private float touchStartX, touchStartY;
     private static final int SWIPE_THRESHOLD = 50;
+    private boolean showSettings;
+    private Rect settingsBtn;
 
     public GameView(Context context) {
         super(context);
         getHolder().addCallback(this);
         paint = new Paint(Paint.ANTI_ALIAS_FLAG);
-        font = Typeface.MONOSPACE;
+        paint.setFilterBitmap(true);
+        quality = GraphicsQuality.MID;
         logic = new GameLogic();
+        logic.setSoundListener(this);
+        sound = new SoundManager(context);
         setFocusable(true);
     }
 
     @Override
     public void surfaceCreated(SurfaceHolder holder) {
-        screenW = getWidth();
-        screenH = getHeight();
-        int tileW = screenW / VIEWPORT_TILES_X;
-        int tileH = screenH / VIEWPORT_TILES_Y;
-        tileSize = Math.min(tileW, tileH);
+        recalcLayout();
         running = true;
         gameThread = new Thread(this);
         gameThread.start();
@@ -43,11 +43,22 @@ public class GameView extends SurfaceView implements SurfaceHolder.Callback, Run
 
     @Override
     public void surfaceChanged(SurfaceHolder holder, int format, int width, int height) {
-        screenW = width;
-        screenH = height;
-        int tileW = screenW / VIEWPORT_TILES_X;
-        int tileH = screenH / VIEWPORT_TILES_Y;
-        tileSize = Math.min(tileW, tileH);
+        screenW = width; screenH = height;
+        recalcLayout();
+    }
+
+    private void recalcLayout() {
+        screenW = getWidth();
+        screenH = getHeight();
+        int maxTileW = screenW / quality.viewTilesX;
+        int maxTileH = screenH / (quality.viewTilesY(screenW, screenH) + 5);
+        tileSize = Math.min(quality.tileSize, Math.min(maxTileW, maxTileH));
+        viewTilesX = screenW / tileSize;
+        viewTilesY = (screenH - tileSize * 5) / tileSize;
+        if (viewTilesX < 8) viewTilesX = 8;
+        if (viewTilesY < 6) viewTilesY = 6;
+        atlas = new TileAtlas(tileSize, quality.detailedSprites);
+        settingsBtn = new Rect(screenW - 55, 10, screenW - 10, 55);
     }
 
     @Override
@@ -64,19 +75,18 @@ public class GameView extends SurfaceView implements SurfaceHolder.Callback, Run
                 render(canvas);
                 getHolder().unlockCanvasAndPost(canvas);
             }
-            try { Thread.sleep(50); } catch (InterruptedException e) {}
+            try { Thread.sleep(quality == GraphicsQuality.FANCY ? 33 : 50); } catch (InterruptedException e) {}
         }
     }
 
     private void render(Canvas canvas) {
         centerViewport();
-        int mapPixelW = VIEWPORT_TILES_X * tileSize;
-        int mapPixelH = VIEWPORT_TILES_Y * tileSize;
+        int mapH = viewTilesY * tileSize;
 
         canvas.drawColor(Color.BLACK);
 
-        for (int vx = 0; vx < VIEWPORT_TILES_X; vx++) {
-            for (int vy = 0; vy < VIEWPORT_TILES_Y; vy++) {
+        for (int vx = 0; vx < viewTilesX; vx++) {
+            for (int vy = 0; vy < viewTilesY; vy++) {
                 int wx = viewX + vx;
                 int wy = viewY + vy;
                 if (wx < 0 || wx >= GameLogic.WORLD_WIDTH || wy < 0 || wy >= GameLogic.WORLD_HEIGHT)
@@ -86,54 +96,57 @@ public class GameView extends SurfaceView implements SurfaceHolder.Callback, Run
                 int py = vy * tileSize;
 
                 if (!logic.explored[wx][wy]) {
+                    paint.setColor(Color.BLACK);
                     canvas.drawRect(px, py, px + tileSize, py + tileSize, paint);
                     continue;
                 }
 
                 Tile tile = logic.tiles[wx][wy];
-                int brightness = logic.visible[wx][wy] ? 255 : 80;
-                int tr = tile.r * brightness / 255;
-                int tg = tile.g * brightness / 255;
-                int tb = tile.b * brightness / 255;
-                paint.setColor(Color.rgb(tr, tg, tb));
-                canvas.drawRect(px, py, px + tileSize, py + tileSize, paint);
+                boolean vis = logic.visible[wx][wy];
 
-                paint.setColor(Color.rgb(
-                    Math.min(255, tr + 30),
-                    Math.min(255, tg + 30),
-                    Math.min(255, tb + 30)));
-                paint.setStyle(Paint.Style.STROKE);
-                paint.setStrokeWidth(1);
-                canvas.drawRect(px, py, px + tileSize, py + tileSize, paint);
-                paint.setStyle(Paint.Style.FILL);
+                int bright = vis ? 255 : 70;
+                paint.setAlpha(bright);
+                Bitmap tex = atlas.getTile(tile);
+                canvas.drawBitmap(tex, px, py, paint);
+                paint.setAlpha(255);
 
-                drawChar(canvas, tile.symbol, px, py, tr, tg, tb);
+                if (vis && quality.smoothLighting) {
+                    paint.setColor(Color.argb(20, 255, 255, 200));
+                    canvas.drawRect(px, py, px + tileSize, py + tileSize, paint);
+                }
             }
         }
 
         for (Item it : logic.items) {
             int vx = it.x - viewX;
             int vy = it.y - viewY;
-            if (vx < 0 || vx >= VIEWPORT_TILES_X || vy < 0 || vy >= VIEWPORT_TILES_Y) continue;
+            if (vx < 0 || vx >= viewTilesX || vy < 0 || vy >= viewTilesY) continue;
             if (!logic.visible[it.x][it.y]) continue;
-            drawChar(canvas, it.symbol, vx * tileSize, vy * tileSize, it.r, it.g, it.b);
+            canvas.drawBitmap(atlas.getItem(it.type), vx * tileSize, vy * tileSize, paint);
         }
 
         for (Entity m : logic.monsters) {
             if (!m.isAlive()) continue;
             int vx = m.x - viewX;
             int vy = m.y - viewY;
-            if (vx < 0 || vx >= VIEWPORT_TILES_X || vy < 0 || vy >= VIEWPORT_TILES_Y) continue;
+            if (vx < 0 || vx >= viewTilesX || vy < 0 || vy >= viewTilesY) continue;
             if (!logic.visible[m.x][m.y]) continue;
-            drawChar(canvas, m.symbol, vx * tileSize, vy * tileSize, m.r, m.g, m.b);
+            Bitmap etex = atlas.getEntity(m.name.hashCode());
+            canvas.drawBitmap(etex, vx * tileSize, vy * tileSize, paint);
+            if (quality != GraphicsQuality.POTATO) {
+                paint.setColor(Color.WHITE);
+                paint.setTextSize(tileSize * 0.3f);
+                paint.setTextAlign(Paint.Align.CENTER);
+                canvas.drawText(String.valueOf(m.hp), vx * tileSize + tileSize / 2f,
+                    vy * tileSize + tileSize - 4, paint);
+            }
         }
 
-        drawChar(canvas, logic.player.symbol,
+        canvas.drawBitmap(atlas.getPlayerSprite(),
             (logic.player.x - viewX) * tileSize,
-            (logic.player.y - viewY) * tileSize,
-            255, 255, 255);
+            (logic.player.y - viewY) * tileSize, paint);
 
-        drawUI(canvas, mapPixelH);
+        drawUI(canvas, mapH);
 
         if (logic.gameOver) {
             paint.setColor(Color.argb(180, 0, 0, 0));
@@ -141,15 +154,12 @@ public class GameView extends SurfaceView implements SurfaceHolder.Callback, Run
             paint.setColor(Color.RED);
             paint.setTextSize(48);
             paint.setTypeface(Typeface.DEFAULT_BOLD);
-            String msg = "GAME OVER";
-            float tw = paint.measureText(msg);
-            canvas.drawText(msg, (screenW - tw) / 2, screenH / 2 - 20, paint);
+            paint.setTextAlign(Paint.Align.CENTER);
+            canvas.drawText("GAME OVER", screenW / 2f, screenH / 2f - 20, paint);
             paint.setTextSize(24);
             paint.setTypeface(Typeface.DEFAULT);
             paint.setColor(Color.WHITE);
-            String sub = "Tap to restart";
-            tw = paint.measureText(sub);
-            canvas.drawText(sub, (screenW - tw) / 2, screenH / 2 + 30, paint);
+            canvas.drawText("Tap to restart", screenW / 2f, screenH / 2f + 30, paint);
         }
         if (logic.won) {
             paint.setColor(Color.argb(180, 0, 0, 0));
@@ -157,24 +167,15 @@ public class GameView extends SurfaceView implements SurfaceHolder.Callback, Run
             paint.setColor(Color.YELLOW);
             paint.setTextSize(48);
             paint.setTypeface(Typeface.DEFAULT_BOLD);
-            String msg = "VICTORY!";
-            float tw = paint.measureText(msg);
-            canvas.drawText(msg, (screenW - tw) / 2, screenH / 2 - 20, paint);
+            paint.setTextAlign(Paint.Align.CENTER);
+            canvas.drawText("VICTORY!", screenW / 2f, screenH / 2f - 20, paint);
             paint.setTextSize(24);
             paint.setTypeface(Typeface.DEFAULT);
             paint.setColor(Color.WHITE);
-            String sub = "You escaped the dungeon!";
-            tw = paint.measureText(sub);
-            canvas.drawText(sub, (screenW - tw) / 2, screenH / 2 + 30, paint);
+            canvas.drawText("You escaped the dungeon!", screenW / 2f, screenH / 2f + 30, paint);
         }
-    }
 
-    private void drawChar(Canvas canvas, char ch, int x, int y, int r, int g, int b) {
-        paint.setColor(Color.rgb(r, g, b));
-        paint.setTextSize(tileSize * 0.8f);
-        paint.setTypeface(font);
-        paint.setTextAlign(Paint.Align.CENTER);
-        canvas.drawText(String.valueOf(ch), x + tileSize / 2f, y + tileSize * 0.8f, paint);
+        drawSettingsOverlay(canvas);
     }
 
     private void drawUI(Canvas canvas, int mapH) {
@@ -190,7 +191,7 @@ public class GameView extends SurfaceView implements SurfaceHolder.Callback, Run
         canvas.drawText("HP:", 10, uiY + 24, paint);
 
         int hpX = 50;
-        int hpW = screenW - hpX - 10;
+        int hpW = screenW - hpX - 70;
         paint.setColor(Color.DKGRAY);
         canvas.drawRect(hpX, uiY + 8, hpX + hpW, uiY + 24, paint);
         if (logic.player.hp > 0) {
@@ -203,58 +204,155 @@ public class GameView extends SurfaceView implements SurfaceHolder.Callback, Run
         paint.setTextSize(14);
         canvas.drawText(logic.player.hp + "/" + logic.player.maxHp, hpX + 5, uiY + 22, paint);
 
+        int line2 = uiY + 46;
         paint.setTextSize(14);
-        canvas.drawText("ATK:" + logic.player.attack + " DEF:" + logic.player.defense, hpX, uiY + 46, paint);
-        canvas.drawText("Depth:" + logic.currentDepth + " Mon:" + logic.monsters.size(), hpX, uiY + 64, paint);
+        canvas.drawText("ATK:" + logic.player.attack + " DEF:" + logic.player.defense, 10, line2, paint);
+        canvas.drawText("D:" + logic.currentDepth + " M:" + logic.monsters.size(), screenW / 2, line2, paint);
 
         paint.setTextSize(13);
         paint.setColor(Color.LTGRAY);
         String msg = logic.log.getLatest();
-        if (msg.length() > 40) msg = msg.substring(0, 40);
-        canvas.drawText(msg, 10, uiY + 86, paint);
+        if (msg.length() > 42) msg = msg.substring(0, 42);
+        canvas.drawText(msg, 10, line2 + 22, paint);
 
-        paint.setTextSize(12);
+        paint.setTextSize(11);
         paint.setColor(Color.GRAY);
-        canvas.drawText("Swipe to move | Wait: tap self", 10, uiY + 106, paint);
+        canvas.drawText("Swipe:move Tap:wait", 10, line2 + 44, paint);
+        canvas.drawText("Quality:" + quality.name(), screenW / 2, line2 + 44, paint);
+
+        paint.setColor(Color.rgb(80, 80, 100));
+        canvas.drawRoundRect(
+            settingsBtn.left, settingsBtn.top,
+            settingsBtn.right, settingsBtn.bottom,
+            8, 8, paint);
+        paint.setColor(Color.WHITE);
+        paint.setTextSize(28);
+        paint.setTextAlign(Paint.Align.CENTER);
+        canvas.drawText("\u2699", settingsBtn.centerX(), settingsBtn.centerY() + 10, paint);
+    }
+
+    private void drawSettingsOverlay(Canvas canvas) {
+        if (!showSettings) return;
+        paint.setColor(Color.argb(200, 0, 0, 0));
+        canvas.drawRect(0, 0, screenW, screenH, paint);
+
+        int cx = screenW / 2, cy = screenH / 2;
+        paint.setColor(Color.rgb(30, 30, 40));
+        canvas.drawRoundRect(cx - 160, cy - 160, cx + 160, cy + 160, 16, 16, paint);
+        paint.setColor(Color.WHITE);
+        paint.setTextSize(22);
+        paint.setTypeface(Typeface.DEFAULT_BOLD);
+        paint.setTextAlign(Paint.Align.CENTER);
+        canvas.drawText("SETTINGS", cx, cy - 130, paint);
+
+        paint.setTypeface(Typeface.DEFAULT);
+        paint.setTextSize(16);
+        GraphicsQuality[] qs = GraphicsQuality.values();
+        for (int i = 0; i < qs.length; i++) {
+            int y = cy - 80 + i * 40;
+            boolean sel = quality == qs[i];
+            paint.setColor(sel ? Color.rgb(80, 180, 255) : Color.rgb(150, 150, 150));
+            paint.setStyle(Paint.Style.STROKE);
+            paint.setStrokeWidth(2);
+            canvas.drawRoundRect(cx - 120, y - 12, cx + 120, y + 16, 8, 8, paint);
+            paint.setStyle(Paint.Style.FILL);
+            paint.setColor(sel ? Color.rgb(80, 180, 255) : Color.LTGRAY);
+            canvas.drawText(qs[i].name(), cx, y + 6, paint);
+        }
+
+        int y = cy + 120;
+        paint.setColor(Color.rgb(150, 150, 150));
+        paint.setStyle(Paint.Style.STROKE);
+        paint.setStrokeWidth(2);
+        canvas.drawRoundRect(cx - 80, y - 12, cx + 80, y + 16, 8, 8, paint);
+        paint.setStyle(Paint.Style.FILL);
+        paint.setColor(sound.isEnabled() ? Color.rgb(80, 200, 80) : Color.rgb(200, 80, 80));
+        paint.setTextSize(16);
+        canvas.drawText(sound.isEnabled() ? "SOUND: ON" : "SOUND: OFF", cx, y + 6, paint);
+
+        paint.setTextSize(14);
+        paint.setColor(Color.GRAY);
+        canvas.drawText("Tap outside to close", cx, cy + 170, paint);
     }
 
     private void centerViewport() {
-        viewX = logic.player.x - VIEWPORT_TILES_X / 2;
-        viewY = logic.player.y - VIEWPORT_TILES_Y / 2;
-        viewX = Math.max(0, Math.min(viewX, GameLogic.WORLD_WIDTH - VIEWPORT_TILES_X));
-        viewY = Math.max(0, Math.min(viewY, GameLogic.WORLD_HEIGHT - VIEWPORT_TILES_Y));
+        viewX = logic.player.x - viewTilesX / 2;
+        viewY = logic.player.y - viewTilesY / 2;
+        viewX = Math.max(0, Math.min(viewX, GameLogic.WORLD_WIDTH - viewTilesX));
+        viewY = Math.max(0, Math.min(viewY, GameLogic.WORLD_HEIGHT - viewTilesY));
     }
 
     @Override
     public boolean onTouchEvent(MotionEvent event) {
-        if (logic.gameOver || logic.won) {
-            logic = new GameLogic();
+        if (event.getAction() != MotionEvent.ACTION_UP) {
+            if (event.getAction() == MotionEvent.ACTION_DOWN) {
+                touchStartX = event.getX();
+                touchStartY = event.getY();
+            }
             return true;
         }
 
-        switch (event.getAction()) {
-            case MotionEvent.ACTION_DOWN:
-                touchStartX = event.getX();
-                touchStartY = event.getY();
-                return true;
-            case MotionEvent.ACTION_UP:
-                float dx = event.getX() - touchStartX;
-                float dy = event.getY() - touchStartY;
-                float dist = (float)Math.sqrt(dx * dx + dy * dy);
+        float ex = event.getX(), ey = event.getY();
+        float dx = ex - touchStartX, dy = ey - touchStartY;
+        float dist = (float)Math.sqrt(dx * dx + dy * dy);
 
-                if (dist < SWIPE_THRESHOLD) {
-                    logic.endTurn();
-                } else if (Math.abs(dx) > Math.abs(dy)) {
-                    logic.movePlayer(dx > 0 ? Direction.RIGHT : Direction.LEFT);
-                } else {
-                    logic.movePlayer(dy > 0 ? Direction.DOWN : Direction.UP);
-                }
-                return true;
+        if (showSettings) {
+            handleSettingsTap(ex, ey);
+            return true;
         }
-        return super.onTouchEvent(event);
+
+        if (settingsBtn.contains((int)ex, (int)ey)) {
+            showSettings = true;
+            return true;
+        }
+
+        if (logic.gameOver || logic.won) {
+            logic = new GameLogic();
+            logic.setSoundListener(this);
+            return true;
+        }
+
+        if (dist < SWIPE_THRESHOLD) {
+            logic.endTurn();
+            sound.play("step");
+        } else if (Math.abs(dx) > Math.abs(dy)) {
+            logic.movePlayer(dx > 0 ? Direction.RIGHT : Direction.LEFT);
+            sound.play("step");
+        } else {
+            logic.movePlayer(dy > 0 ? Direction.DOWN : Direction.UP);
+            sound.play("step");
+        }
+        return true;
     }
 
-    public void resetGame() {
-        logic = new GameLogic();
+    private void handleSettingsTap(float x, float y) {
+        int cx = screenW / 2, cy = screenH / 2;
+
+        if (x < cx - 160 || x > cx + 160 || y < cy - 160 || y > cy + 160) {
+            showSettings = false;
+            return;
+        }
+
+        GraphicsQuality[] qs = GraphicsQuality.values();
+        for (int i = 0; i < qs.length; i++) {
+            int sy = cy - 80 + i * 40;
+            if (y >= sy - 12 && y <= sy + 16 && x >= cx - 120 && x <= cx + 120) {
+                if (quality != qs[i]) {
+                    quality = qs[i];
+                    recalcLayout();
+                    logic.updateFov();
+                }
+                return;
+            }
+        }
+
+        int sy = cy + 120;
+        if (y >= sy - 12 && y <= sy + 16 && x >= cx - 80 && x <= cx + 80) {
+            sound.setEnabled(!sound.isEnabled());
+        }
     }
+
+    public void onSound(String name) { sound.play(name); }
+    public void playSound(String name) { sound.play(name); }
+    public SoundManager getSound() { return sound; }
 }
