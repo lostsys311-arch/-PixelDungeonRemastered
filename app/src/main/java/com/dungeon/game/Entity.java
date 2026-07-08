@@ -13,6 +13,10 @@ public class Entity {
     public int visionRange;
     public int r, g, b;
     public boolean isPlayer;
+    public int level;
+    public int xp, xpNext;
+    public int gold;
+    public boolean isBoss;
 
     public Entity(String name, char symbol, int x, int y, int hp, int attack, int defense, int r, int g, int b) {
         this.name = name;
@@ -23,6 +27,11 @@ public class Entity {
         this.visionRange = 6;
         this.r = r; this.g = g; this.b = b;
         this.isPlayer = false;
+        this.level = 1;
+        this.xp = 0;
+        this.xpNext = 10;
+        this.gold = 0;
+        this.isBoss = false;
     }
 
     public boolean isAlive() { return hp > 0; }
@@ -36,6 +45,19 @@ public class Entity {
     public int attack(Entity other) {
         int roll = RNG.nextInt(attack) + 1;
         return other.damage(roll);
+    }
+
+    public void addXp(int amount) {
+        xp += amount;
+        while (xp >= xpNext) {
+            xp -= xpNext;
+            level++;
+            maxHp += 5;
+            hp += 5;
+            attack += 2;
+            defense += 1;
+            xpNext = (int)(xpNext * 1.5);
+        }
     }
 
     public boolean canSee(int tx, int ty, Tile[][] tiles) {
