@@ -195,7 +195,7 @@ public class GameView extends SurfaceView implements SurfaceHolder.Callback, Run
         canvas.drawRect(hpX, uiY + 8, hpX + hpW, uiY + 24, paint);
         if (logic.player.hp > 0) {
             float ratio = (float)logic.player.hp / logic.player.maxHp;
-            Color hpColor = ratio > 0.5f ? Color.GREEN : (ratio > 0.25f ? Color.rgb(255, 165, 0) : Color.RED);
+            int hpColor = ratio > 0.5f ? 0xFF00FF00 : (ratio > 0.25f ? 0xFFFFA500 : 0xFFFF0000);
             paint.setColor(hpColor);
             canvas.drawRect(hpX, uiY + 8, hpX + hpW * ratio, uiY + 24, paint);
         }
